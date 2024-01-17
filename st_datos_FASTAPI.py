@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import psycopg2
-
+from typing import List
 
 app = FastAPI()
 
@@ -21,6 +21,14 @@ app.add_middleware(
 
 class Item(BaseModel):
     ruta: str
+    
+class Jokalariak(BaseModel):
+    id: int
+    izena: str
+    abizena: str
+    nan: str
+    puntuaketa: int
+    denbora: int
 
 # NAN Postgre datu base barruan existitzen al den konprobatu
 def check_nan_exists(postgres_cursor, nan_value):
@@ -91,7 +99,7 @@ async def datuak_transferentzia(item: Item):
     return JSONResponse(content={"Mezua": "Datuak berritu dira."}, status_code=200)
 
 # PostgreSQLko datuak lortu MVC barruan irakusteko
-@app.get('/lortu_datuak')
+@app.get('/lortu_datuak', response_model=List[Jokalariak])
 async def lortu_datuak():
     try:
         # Postgres datu basera konexioa egin
@@ -106,7 +114,7 @@ async def lortu_datuak():
         postgres_cursor = postgres_conn.cursor()
 
         # Postgres-etik datuak irakurri
-        postgres_cursor.execute("SELECT id, izena, abizena, nan, puntuaketa, denbora FROM txapelketa_txapelketa")
+        postgres_cursor.execute("SELECT id, izena, abizena, nan, puntuaketa, denbora FROM txapelketa_txapelketa order by puntuaketa desc")
         data = postgres_cursor.fetchall()
 
     except Exception as e:
