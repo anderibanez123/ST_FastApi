@@ -127,6 +127,11 @@ async def lortu_datuak():
     return JSONResponse(content={"Jokalariak": data}, status_code=200)
 
 
+@app.get("/ping")
+def ping():
+    return {"message": "¡API ondo dabil, OK!"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8012)
