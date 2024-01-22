@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
 import psycopg2
 from typing import List
 
@@ -19,8 +18,7 @@ app.add_middleware(
 )
 
 
-class Item(BaseModel):
-    ruta: str
+
     
 class Jokalariak(BaseModel):
     id: int
@@ -36,26 +34,33 @@ def check_nan_exists(postgres_cursor, nan_value):
     count = postgres_cursor.fetchone()[0]
     return count > 0
 
+
 # NAN postgreSQL barruan existitzen bada, denbora eta puntuaketa datuak aktualizatu
-def update_nan_data(postgres_cursor, nan_value, denbora, puntuaketa):
+def update_nan_data(postgres_cursor, row):
     postgres_cursor.execute("UPDATE txapelketa_txapelketa SET denbora = %s, puntuaketa = %s WHERE NAN = %s",
-                            (denbora, puntuaketa, nan_value))
+                            (row[3], row[4], row[2]))
 
 # NAN postgreSQL barruan ez bada existitzen, insert bat egin, datua berriak sartu ahal izateko
 def insert_nan_data(postgres_cursor, row):
-    postgres_cursor.execute("INSERT INTO txapelketa_txapelketa (NAN, izena, abizena, denbora, puntuaketa) VALUES (%s, %s, %s, %s, %s)",
+    postgres_cursor.execute("INSERT INTO txapelketa_txapelketa (izena, abizena, nan, denbora, puntuaketa) VALUES (%s, %s, %s, %s, %s)",
                             (row[0], row[1], row[2], row[3], row[4]))
+    
+    
+
+from fastapi import FastAPI, HTTPException
+
+class Ranking(BaseModel):
+    id: int
+    izena: str
+    abizena: str
+    nan: str
+    puntuaketa: int
+    denbora: int
 
 # SQLiteko datua postgreSQLra pasatzeko funtzioa
 @app.post('/datuak_berritu')
-async def datuak_transferentzia(item: Item):
-    
+async def datuak_transferentzia(ranking_list: List[Ranking]):
     try:
-        
-        # SQLite datu basera konexioa ireki
-        sqlite_conn = sqlite3.connect(item.ruta)
-        sqlite_cursor = sqlite_conn.cursor()
-
         # Postgres datu basera konexioa egin
         postgres_conn = psycopg2.connect(
             database="st_db",
@@ -67,36 +72,44 @@ async def datuak_transferentzia(item: Item):
         
         postgres_cursor = postgres_conn.cursor()
 
-        # SQLiteko datuak hartu eta Postgresera pasatu
-        sqlite_cursor.execute("SELECT * FROM txapelketa")
-        data = sqlite_cursor.fetchall()
-
-        # Datuak prozesatu
-        for row in data:
+        # Insertar datos en PostgreSQL
+        for ranking in ranking_list:
             
-            nan_value = row[0]
-            denbora = row[3]
-            puntuaketa = row[4]
+            # Konprobatu existitzen al den, datu base barruan DNI hori
+            kantitatea = check_nan_exists(postgres_cursor, ranking.nan)
 
-            if check_nan_exists(postgres_cursor, nan_value):
-                # Aktualizatu datuak
-                update_nan_data(postgres_cursor, nan_value, denbora, puntuaketa)
-            else:
-                # Inserta egin
-                insert_nan_data(postgres_cursor, row)
+            
+            
+            if(kantitatea > 0):
+                
+                # Datu base barruan existitzen bada, update egin datuei
+                update_nan_data(postgres_cursor, (ranking.izena, ranking.abizena, ranking.nan, ranking.denbora, ranking.puntuaketa))
+                
+            else: 
+                
+                # Existitzen ez bada datu base barruan, insert egin
+                insert_nan_data(postgres_cursor, (ranking.izena, ranking.abizena, ranking.nan, ranking.denbora, ranking.puntuaketa))
+                
 
-        # Commit egin datuak gordetzeko
+
+        # Commit para guardar los datos
         postgres_conn.commit()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        # Konexioak itxi
-        sqlite_conn.close()
+        # Cerrar la conexión
         postgres_conn.close()
 
-    return JSONResponse(content={"Mezua": "Datuak berritu dira."}, status_code=200)
+        return JSONResponse(content={"Mezua": "Datuak berritu dira."}, status_code=200)
+
+    except HTTPException as http_exc:
+        # Manejar específicamente la excepción HTTPException
+        print(f"HTTPException: {http_exc}")
+        raise http_exc
+
+    except Exception as e:
+        # Manejar otras excepciones
+        print(f"Exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # PostgreSQLko datuak lortu MVC barruan irakusteko
 @app.get('/lortu_datuak', response_model=List[Jokalariak])
@@ -116,6 +129,8 @@ async def lortu_datuak():
         # Postgres-etik datuak irakurri
         postgres_cursor.execute("SELECT id, izena, abizena, nan, puntuaketa, denbora FROM txapelketa_txapelketa order by puntuaketa desc")
         data = postgres_cursor.fetchall()
+        
+        
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
